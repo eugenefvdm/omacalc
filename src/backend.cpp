@@ -19,10 +19,80 @@ const QString plusSign = QStringLiteral("+");
 const QString minusSign = QStringLiteral("−");
 const QString multiplySign = QStringLiteral("×");
 const QString divideSign = QStringLiteral("÷");
+const QString openParen = QStringLiteral("(");
+const QString closeParen = QStringLiteral(")");
 
 bool isOperator(const QString &token) {
     return token == plusSign || token == minusSign
         || token == multiplySign || token == divideSign;
+}
+
+bool isParen(const QString &token) {
+    return token == openParen || token == closeParen;
+}
+
+// Recursive-descent parser over the flat token list, giving × and ÷ their
+// usual precedence over + and − and letting parentheses override both.
+double parseExpression(const QStringList &tokens, int &pos, bool &ok);
+
+double parseFactor(const QStringList &tokens, int &pos, bool &ok) {
+    if (pos >= tokens.size() || isOperator(tokens.at(pos)) || tokens.at(pos) == closeParen) {
+        ok = false;
+        return 0;
+    }
+    if (tokens.at(pos) == openParen) {
+        ++pos;
+        const double value = parseExpression(tokens, pos, ok);
+        if (!ok)
+            return 0;
+        if (pos >= tokens.size() || tokens.at(pos) != closeParen) {
+            ok = false;
+            return 0;
+        }
+        ++pos;
+        return value;
+    }
+
+    bool numberOk = false;
+    const double value = QLocale::c().toDouble(tokens.at(pos), &numberOk);
+    if (!numberOk) {
+        ok = false;
+        return 0;
+    }
+    ++pos;
+    return value;
+}
+
+double parseTerm(const QStringList &tokens, int &pos, bool &ok) {
+    double value = parseFactor(tokens, pos, ok);
+    if (!ok)
+        return 0;
+
+    while (pos < tokens.size()
+           && (tokens.at(pos) == multiplySign || tokens.at(pos) == divideSign)) {
+        const QString op = tokens.at(pos++);
+        const double operand = parseFactor(tokens, pos, ok);
+        if (!ok)
+            return 0;
+        value = (op == multiplySign) ? value * operand : value / operand;
+    }
+    return value;
+}
+
+double parseExpression(const QStringList &tokens, int &pos, bool &ok) {
+    double value = parseTerm(tokens, pos, ok);
+    if (!ok)
+        return 0;
+
+    while (pos < tokens.size()
+           && (tokens.at(pos) == plusSign || tokens.at(pos) == minusSign)) {
+        const QString op = tokens.at(pos++);
+        const double operand = parseTerm(tokens, pos, ok);
+        if (!ok)
+            return 0;
+        value = (op == plusSign) ? value + operand : value - operand;
+    }
+    return value;
 }
 
 // Digits are entered raw, so "5." and "-" can linger while typing. Seal them
@@ -69,22 +139,38 @@ QString Backend::display() const {
 // Operand tokens carry full round-trip precision when they come from a chained
 // result; present every number at display precision instead.
 QString Backend::prettyExpression(const QStringList &tokens) {
-    QStringList pretty;
-    pretty.reserve(tokens.size());
-    for (const QString &token : tokens)
-        pretty << (isOperator(token) ? token
-                                     : formatNumber(QLocale::c().toDouble(token)));
-    return pretty.join(QLatin1Char(' '));
+    QString pretty;
+    for (const QString &token : tokens) {
+        const QString piece = (isOperator(token) || isParen(token))
+            ? token : formatNumber(QLocale::c().toDouble(token));
+        // No space after an opening paren or before a closing one, so groups
+        // read as "(2 + 3)" rather than "( 2 + 3 )".
+        if (!pretty.isEmpty() && token != closeParen && !pretty.endsWith(openParen))
+            pretty += QLatin1Char(' ');
+        pretty += piece;
+    }
+    return pretty;
 }
 
-// The number the calculator is "at" right now: the entry being typed, or the
-// operand the last operator was applied to, or the fresh-start zero.
+// The number the calculator is "at" right now: the entry being typed, the
+// total of a group just closed, the operand the last operator was applied
+// to, or the fresh-start zero.
 QString Backend::currentValue() const {
     if (!m_entry.isEmpty())
         return sealNumber(m_entry);
+
+    // If the tokens so far already form a complete expression -- notably
+    // right after a closing paren -- show its evaluated total rather than
+    // whatever plain number happens to sit last in the token list.
+    bool ok = false;
+    const double value = evaluateTokens(m_tokens, &ok);
+    if (ok)
+        return QString::number(value, 'g', 17);
+
     for (int i = m_tokens.size() - 1; i >= 0; --i) {
-        if (!isOperator(m_tokens.at(i)))
-            return m_tokens.at(i);
+        const QString &token = m_tokens.at(i);
+        if (!isOperator(token) && !isParen(token))
+            return token;
     }
     return QStringLiteral("0");
 }
@@ -112,6 +198,10 @@ void Backend::pressKey(const QString &key) {
         pressBackspace();
     } else if (key == QStringLiteral("clear")) {
         pressClear();
+    } else if (key == openParen) {
+        pressOpenParen();
+    } else if (key == closeParen) {
+        pressCloseParen();
     } else {
         return;
     }
@@ -284,6 +374,55 @@ void Backend::pressClear() {
     m_errored = false;
 }
 
+int Backend::openParenDepth() const {
+    int depth = 0;
+    for (const QString &token : m_tokens) {
+        if (token == openParen)
+            ++depth;
+        else if (token == closeParen)
+            --depth;
+    }
+    return depth;
+}
+
+// "(" is only valid where a fresh operand could start: at the beginning,
+// right after an operator, or right after another "(". Anywhere else --
+// mid-entry, right after a number, right after ")" -- it's ignored rather
+// than guessing at an operator the user didn't type.
+void Backend::pressOpenParen() {
+    if (m_errored)
+        pressClear();
+    if (m_justEvaluated)
+        pressClear();
+
+    if (!m_entry.isEmpty())
+        return;
+    if (!m_tokens.isEmpty() && !isOperator(m_tokens.last()) && m_tokens.last() != openParen)
+        return;
+
+    m_tokens << openParen;
+}
+
+// ")" only closes a group that is actually open, and only over a complete
+// value -- not a dangling operator or an empty "()".
+void Backend::pressCloseParen() {
+    if (m_errored || m_justEvaluated)
+        return;
+    if (openParenDepth() <= 0)
+        return;
+
+    if (!m_entry.isEmpty()) {
+        m_tokens << sealNumber(m_entry);
+        m_entry.clear();
+        m_tokens << closeParen;
+        return;
+    }
+
+    if (m_tokens.isEmpty() || isOperator(m_tokens.last()) || m_tokens.last() == openParen)
+        return;
+    m_tokens << closeParen;
+}
+
 // Editing after equals picks up from the result's displayed digits, with the
 // old expression cleared away so the new one grows from "42" rather than
 // "42 × 3 + 7".
@@ -305,48 +444,14 @@ double Backend::evaluateTokens(const QStringList &tokens, bool *ok) {
     if (!ok)
         ok = &localOk;
 
-    *ok = false;
-    if (tokens.size() % 2 == 0)
-        return 0;
-
-    // First fold × and ÷ into their neighbors, then sum what remains, giving
-    // multiplication its usual precedence over addition.
-    QList<double> values;
-    QStringList additiveOperators;
-
-    bool numberOk = false;
-    values << QLocale::c().toDouble(tokens.first(), &numberOk);
-    if (!numberOk)
-        return 0;
-
-    for (int i = 1; i + 1 < tokens.size(); i += 2) {
-        const QString &op = tokens.at(i);
-        const double operand = QLocale::c().toDouble(tokens.at(i + 1), &numberOk);
-        if (!numberOk || !isOperator(op))
-            return 0;
-
-        if (op == multiplySign) {
-            values.last() *= operand;
-        } else if (op == divideSign) {
-            values.last() /= operand;
-        } else {
-            additiveOperators << op;
-            values << operand;
-        }
-    }
-
-    double total = values.first();
-    for (int i = 0; i < additiveOperators.size(); ++i) {
-        if (additiveOperators.at(i) == plusSign)
-            total += values.at(i + 1);
-        else
-            total -= values.at(i + 1);
-    }
-
-    if (!std::isfinite(total))
-        return 0;
-
+    int pos = 0;
     *ok = true;
+    const double total = parseExpression(tokens, pos, *ok);
+    if (!*ok || pos != tokens.size() || !std::isfinite(total)) {
+        *ok = false;
+        return 0;
+    }
+
     return total;
 }
 

@@ -56,7 +56,10 @@ private:
     void pressToggleSign();
     void pressBackspace();
     void pressClear();
+    void pressOpenParen();
+    void pressCloseParen();
 
+    int openParenDepth() const;
     QString currentValue() const;
     void beginEditingAfterResult();
     void clearEvaluation();

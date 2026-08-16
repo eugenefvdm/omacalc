@@ -42,6 +42,47 @@ private slots:
         QCOMPARE(calculator.display(), QStringLiteral("8"));
     }
 
+    void calculatesWithParentheses() {
+        Backend calculator;
+        press(calculator, "( 2 + 3 ) × 4 =");
+        QCOMPARE(calculator.display(), QStringLiteral("20"));
+        QCOMPARE(calculator.expression(), QStringLiteral("(2 + 3) × 4"));
+
+        // Precedence is overridden inside the group but still applies outside it.
+        press(calculator, "clear 2 + 3 × ( 4 + 1 ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("17"));
+
+        // Nested groups.
+        press(calculator, "clear ( ( 1 + 2 ) × ( 3 + 4 ) ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("21"));
+
+        // "(" only opens a fresh group. Right after a number it's ignored
+        // rather than assumed to mean multiply, so digits keep accumulating.
+        press(calculator, "clear 3 ( 4 + 5 ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("39"));
+
+        // Likewise right after a closing paren -- an explicit operator is
+        // required between two groups.
+        press(calculator, "clear ( 2 + 3 ) ( 1 + 1 ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("Error"));
+        press(calculator, "clear ( 2 + 3 ) × ( 1 + 1 ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("10"));
+
+        // The live display shows a closed group's evaluated total.
+        press(calculator, "clear ( 2 + 3 )");
+        QCOMPARE(calculator.display(), QStringLiteral("5"));
+
+        // An unbalanced group is incomplete, not silently auto-closed.
+        press(calculator, "clear ( 2 + 3 =");
+        QCOMPARE(calculator.display(), QStringLiteral("Error"));
+
+        // A stray ")" with nothing open, or right after "(", is ignored.
+        press(calculator, "clear 5 )");
+        QCOMPARE(calculator.display(), QStringLiteral("5"));
+        press(calculator, "clear ( )");
+        QCOMPARE(calculator.display(), QStringLiteral("0"));
+    }
+
     void showsEntryWhileTyping() {
         Backend calculator;
         press(calculator, "4 2 ×");

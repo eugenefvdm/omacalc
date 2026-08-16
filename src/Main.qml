@@ -94,7 +94,7 @@ ApplicationWindow {
                 backend.pressKey("sign");
             } else if (event.text === "c" || event.text === "C") {
                 backend.pressKey("clear");
-            } else if (/^[0-9+\-*/%]$/.test(event.text)) {
+            } else if (/^[0-9+\-*/%()]$/.test(event.text)) {
                 backend.pressKey(event.text);
             } else {
                 return;

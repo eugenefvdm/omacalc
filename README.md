@@ -20,9 +20,11 @@ Percent follows the familiar calculator convention: with a pending `+` or `−`
 it takes that percentage of the running total (`200 + 10 % =` gives `220`),
 while with `×` or `÷` — or on its own — it simply divides by 100.
 
+Parentheses group sub-expressions and override precedence, e.g. `(2 + 3) × 4` gives `20.`
+
 Everything works from the keyboard too:
 
-- `0-9`, `.`, `+`, `-`, `*`, `/`, and `%` enter digits and operators.
+- `0-9`, `.`, `+`, `-`, `*`, `/`, `%`, `(`, and `)` enter digits and operators.
 - `Enter` or `=` calculates.
 - `Backspace` deletes the last digit.
 - `C` or `Escape` clears.
