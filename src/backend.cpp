@@ -269,7 +269,9 @@ void Backend::pressOperator(const QString &pretty) {
     if (!m_entry.isEmpty()) {
         m_tokens << sealNumber(m_entry) << pretty;
         m_entry.clear();
-    } else if (m_tokens.isEmpty()) {
+    } else if (m_tokens.isEmpty() || m_tokens.last() == openParen) {
+        // A group starts a fresh expression, so an operator leading one gets
+        // the same implicit zero an operator leading the whole line gets.
         m_tokens << QStringLiteral("0") << pretty;
     } else if (isOperator(m_tokens.last())) {
         m_tokens.last() = pretty;

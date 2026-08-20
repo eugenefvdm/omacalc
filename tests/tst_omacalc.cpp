@@ -81,6 +81,14 @@ private slots:
         QCOMPARE(calculator.display(), QStringLiteral("5"));
         press(calculator, "clear ( )");
         QCOMPARE(calculator.display(), QStringLiteral("0"));
+
+        // An operator leading a group gets the same implicit zero one leading
+        // the whole line gets, so (-3 + 4) matches -3 + 4 rather than erroring.
+        press(calculator, "clear ( - 3 + 4 ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("1"));
+        QCOMPARE(calculator.expression(), QStringLiteral("(0 − 3 + 4)"));
+        press(calculator, "clear ( 2 + 3 ) × ( - 1 + 4 ) =");
+        QCOMPARE(calculator.display(), QStringLiteral("15"));
     }
 
     void showsEntryWhileTyping() {
